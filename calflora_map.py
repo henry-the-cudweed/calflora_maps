@@ -5,7 +5,8 @@ from arcpy import env
 from arcpy.da import InsertCursor
 
 MGP_shapeID = "rs1515"
-plantlist_id = "px4481"
+APIkey = INSERT API KEY HERE
+
 
 # Define workspace and geodatabase
 workspace = r'C:\GIS\CalfloraProject'
@@ -44,8 +45,8 @@ params = {
     #'shapeId': "rs1515",  # Example shapeId
     'shapeId': MGP_shapeID,
 
-    'plantlistId': plantlist_id,  # Example plantlistId
-    'projectIds': 'pr940',  # Example projectIds
+    #'plantlistId': plantlist_id,  # Example plantlistId
+    #'projectIds': 'pr940',  # Example projectIds
 }
 
 # Define API endpoint with the species filter
@@ -57,7 +58,7 @@ api_url = f"https://api.calflora.org/observations?plantlistId={plantlist_id}&max
 
 
 # Send the request with the additional parameters
-headers = {"X-Api-Key": "enter key here"}
+headers = {"X-Api-Key": APIkey}
 response = requests.get(api_url, headers=headers, params=params)
 
 # Check the status and handle the response
