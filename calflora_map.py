@@ -1,3 +1,13 @@
+#
+#
+# run this by using Python Console in ArcGIS, run the following code just in one line
+#
+#APIkey = "insert your key"; import requests; exec(requests.get("https://raw.githubusercontent.com/henry-the-cudweed/calflora_maps/refs/heads/main/calflora_map.py").text, globals())
+#
+#
+# you will also have to create a symbology layer beforehand
+
+
 import arcpy
 import requests
 import os
@@ -5,8 +15,6 @@ from arcpy import env
 from arcpy.da import InsertCursor
 
 MGP_shapeID = "rs1515"
-#before running this program, define APIkey in the console by typing:
-#APIkey = "your_key"  
 
 # Define workspace and geodatabase
 workspace = r'C:\GIS\CalfloraProject'
