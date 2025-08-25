@@ -5,8 +5,8 @@ from arcpy import env
 from arcpy.da import InsertCursor
 
 MGP_shapeID = "rs1515"
-APIkey = INSERT API KEY HERE
-
+#before running this program, define APIkey in the console by typing:
+#APIkey = "your_key"  
 
 # Define workspace and geodatabase
 workspace = r'C:\GIS\CalfloraProject'
