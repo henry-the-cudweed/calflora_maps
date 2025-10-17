@@ -51,11 +51,64 @@ else:
 params = {
     'csetId': 291,
     #'shapeId': "rs1515",  # Example shapeId
+    'shapeId': MGP_shapeID#
+#
+# run this by using Python Console in ArcGIS, run the following code just in one line
+#
+#APIkey = "insert your key"; import requests; exec(requests.get("https://raw.githubusercontent.com/henry-the-cudweed/calflora_maps/refs/heads/main/calflora_map.py").text, globals())
+#
+#
+# you will also have to create a symbology layer beforehand
+
+
+import arcpy
+import requests
+import os
+from arcpy import env
+from arcpy.da import InsertCursor
+
+MGP_shapeID = "rs1515"
+
+# Define workspace and geodatabase
+workspace = r'C:\GIS\CalfloraProject'
+gdb_name = 'CalfloraData.gdb'
+gdb_path = os.path.join(workspace, gdb_name)
+
+# Ensure workspace exists
+if not os.path.exists(workspace):
+    os.makedirs(workspace)
+
+# Create geodatabase if it doesn't exist
+if not arcpy.Exists(gdb_path):
+    arcpy.CreateFileGDB_management(workspace, gdb_name)
+    print(f"Created geodatabase: {gdb_path}")
+else:
+    print(f"Using existing geodatabase: {gdb_path}")
+
+# Feature class settings
+fc_name = "Calflora_Polygons"
+fc_path = os.path.join(gdb_path, fc_name)
+
+# Create feature class if it doesn't exist
+if not arcpy.Exists(fc_path):
+    arcpy.CreateFeatureclass_management(gdb_path, fc_name, "POLYGON", spatial_reference=4326)
+    arcpy.AddField_management(fc_path, "CommonName", "TEXT")
+    arcpy.AddField_management(fc_path, "Taxon", "TEXT")
+    arcpy.AddField_management(fc_path, "Observer", "TEXT")
+    arcpy.AddField_management(fc_path, "PercentCover", "TEXT")
+    print(f"Created feature class: {fc_path}")
+else:
+    print(f"Using existing feature class: {fc_path}")
+
+# Define additional parameters for limiting the search
+params = {
+    'csetId': 291,
+    #'shapeId': "rs1515",  # Example shapeId
     'shapeId': MGP_shapeID,
 
-    #'plantlistId': plantlist_id,  # Example plantlistId
-    #'projectIds': 'pr940',  # Example projectIds
+    'projectIds': 'pr940'  # Example projectIds
 }
+plantlist_id = 'px1436'
 
 # Define API endpoint with the species filter
 #species = "Silybum marianum"
@@ -66,7 +119,141 @@ api_url = f"https://api.calflora.org/observations?plantlistId={plantlist_id}&max
 
 
 # Send the request with the additional parameters
-headers = {"X-Api-Key": APIkey}
+headers = {"X-Api-Key": "CKLjKHH1nVZMlC8tsu"}
+response = requests.get(api_url, headers=headers, params=params)
+
+# Check the status and handle the response
+if response.status_code == 200:
+    data = response.json()
+    print(f"Fetched {len(data)} records from the API.")
+else:
+    print("Error fetching data from API:", response.text)
+    data = []
+
+# Function to convert percent cover range to a numeric value (average of the range)
+def convert_percent_cover(cover_value):
+    if cover_value is None:
+        return 0
+    
+    cover_str = str(cover_value).strip()
+    
+    # Handle range like "1 - 5"
+    if " - " in cover_str:
+        try:
+            low, high = map(float, cover_str.split(" - "))
+            return (low + high) / 2
+        except:
+            return 0
+    
+    # Handle single numeric value
+    try:
+        return float(cover_str)
+    except:
+        return 0
+
+# Delete all existing rows from the feature class to avoid accumulation of old data
+if arcpy.Exists(fc_path):
+    with arcpy.da.UpdateCursor(fc_path, ["SHAPE@"]) as cursor:
+        for row in cursor:
+            cursor.deleteRow()
+    print(f"Cleared existing records in {fc_name}.")
+
+# Insert data into feature class (polygons only)
+fields = ["SHAPE@", "CommonName", "Taxon", "Observer", "PercentCover"]
+
+with arcpy.da.InsertCursor(fc_path, fields) as cursor:
+    print(f"Total records fetched from API: {len(data)}")
+    
+    for record in data:
+        wkt = record.get("Reference Polygon")
+        
+        # Skip records with missing geometry
+        if not wkt:
+            print(f"Skipping {record.get('Taxon', 'Unknown')} due to missing geometry")
+            continue
+        
+        # Only process polygons
+        if not wkt.upper().startswith("POLYGON"):
+            print(f"Skipping {record.get('Taxon', 'Unknown')} because geometry is not a polygon")
+            continue
+        
+        try:
+            geom = arcpy.FromWKT(wkt)
+            print(f"Created polygon for {record.get('Taxon', 'Unknown')}")
+        except Exception as e:
+            print(f"Error creating polygon for {record.get('Taxon', 'Unknown')}: {e}")
+            continue
+        
+        # Convert Percent Cover to numeric value
+        percent_cover = convert_percent_cover(record.get("Percent Cover", ""))
+        print(f"Inserting {record.get('Taxon', 'Unknown')} with percent cover {percent_cover}")
+        
+        cursor.insertRow([
+            geom,
+            record.get("Common Name", ""),
+            record.get("Taxon", ""),
+            record.get("Observer", ""),
+            percent_cover
+        ])
+
+print("Data added to feature class.")
+
+
+
+# Apply symbology
+symbology_layer = r'C:\GIS\CalfloraProject\Symbology.lyrx'
+
+doc = arcpy.mp.ArcGISProject("CURRENT")
+map_obj = doc.listMaps()[0]
+
+# Check if layer already exists in the map
+layer = None
+for lyr in map_obj.listLayers():
+    if lyr.name == fc_name:
+        layer = lyr
+        break
+
+if layer is None:
+    layer = map_obj.addDataFromPath(fc_path)
+    print(f"Added {fc_name} layer to map.")
+else:
+    print(f"{fc_name} layer already exists in map.")
+
+# Apply symbology from layer file
+if os.path.exists(symbology_layer):
+    layer.updateConnectionProperties(fc_path, fc_path)  # Ensures layer is properly linked
+    arcpy.ApplySymbologyFromLayer_management(layer, symbology_layer)
+    print("Symbology applied.")
+else:
+    print(f"Symbology layer not found at {symbology_layer}")
+
+# Export to PDF
+pdf_output = r'C:\GIS\CalfloraProject\Calflora_Map.pdf'
+
+
+layout_name = "Main Layout"  # replace with your layout's name
+layouts = [l for l in doc.listLayouts() if l.name == layout_name]
+if layouts:
+    layouts[0].exportToPDF(pdf_output)
+    print(f"Map exported to {pdf_output}")
+else:
+    print(f"Layout '{layout_name}' not found. PDF export skipped.")
+
+
+    #'projectIds': 'pr940',  # Example projectIds
+}
+plantlist_id = 'px1436'
+
+# Define API endpoint with the species filter
+#species = "Silybum marianum"
+#api_url = f"https://api.calflora.org/observations?taxon={species.replace(' ', '%20')}&maxResults=10"
+
+# Define API endpoint with the plant list filter
+api_url = f"https://api.calflora.org/observations?plantlistId={plantlist_id}&maxResults=10"
+
+
+# Send the request with the additional parameters
+headers = {"X-Api-Key": "INSERT KEY HERE"}
 response = requests.get(api_url, headers=headers, params=params)
 
 # Check the status and handle the response
