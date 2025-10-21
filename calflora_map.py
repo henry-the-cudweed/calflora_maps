@@ -78,7 +78,7 @@ api_url = f"https://api.calflora.org/observations?plantlistId={plantlist_id}&max
 
 ###### API REQUEST AND RESPONSE
 # Send the request with the additional parameters
-headers = {"X-Api-Key": "CKLjKHH1nVZMlC8tsu"}
+headers = {"X-Api-Key": "insert key here"}
 response = requests.get(api_url, headers=headers, params=params)
 
 # Check the status and handle the response
