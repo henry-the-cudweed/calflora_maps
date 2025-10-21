@@ -7,7 +7,6 @@
 #
 # you will also have to create a symbology layer beforehand
 
-
 import arcpy
 import requests
 import os
@@ -16,11 +15,6 @@ from arcpy.da import InsertCursor
 
 MGP_shapeID = "rs1515"
 
-
-
-
-
-##### SETUP WORKSPACE, GEODATABASE, FEATURE CLASS
 # Define workspace and geodatabase
 workspace = r'C:\GIS\CalfloraProject'
 gdb_name = 'CalfloraData.gdb'
@@ -52,31 +46,16 @@ if not arcpy.Exists(fc_path):
 else:
     print(f"Using existing feature class: {fc_path}")
 
-
-
-
-###### DEFINE SEARCH PARAMETERS
-    
 # Define additional parameters for limiting the search
 params = {
     'csetId': 291,
-    #'shapeId': "rs1515",  # Example shapeId
-    'shapeId': MGP_shapeID,
-
-    #'plantlistId': plantlist_id,  # Example plantlistId
-    #'projectIds': 'pr940',  # Example projectIds
+    'shapeId': MGP_shapeID
 }
-
-# Define API endpoint with the species filter
-#species = "Silybum marianum"
-#api_url = f"https://api.calflora.org/observations?taxon={species.replace(' ', '%20')}&maxResults=10"
+plantlist_id = 'px1436'
 
 # Define API endpoint with the plant list filter
 api_url = f"https://api.calflora.org/observations?plantlistId={plantlist_id}&maxResults=10"
 
-
-
-###### API REQUEST AND RESPONSE
 # Send the request with the additional parameters
 headers = {"X-Api-Key": "CKLjKHH1nVZMlC8tsu"}
 response = requests.get(api_url, headers=headers, params=params)
@@ -89,20 +68,58 @@ else:
     print("Error fetching data from API:", response.text)
     data = []
 
-
-###### CLEAN DATA
 # Function to convert percent cover range to a numeric value (average of the range)
 def convert_percent_cover(cover_str):
     if cover_str:
-        # Extract numeric values from the string (e.g., "1 - 5" -> 1, 5)
         range_values = cover_str.split(" - ")
         if len(range_values) == 2:
-            low = float(range_values[0])
-            high = float(range_values[1])
-            # Return the average of the range
-            return (low + high) / 2
-    # Return 0 (or another default value) if the string doesn't match a range
+            try:
+                low = float(range_values[0])
+                high = float(range_values[1])
+                return (low + high) / 2
+            except ValueError:
+                pass
     return 0
+
+# Function to get polygon geometry (polygon or buffered line)
+def get_polygon_from_wkt(record):
+    wkt = record.get("Reference Polygon")
+    if not wkt:
+        return None
+
+    # Handle polygon geometry directly
+    if wkt.startswith("POLYGON"):
+        return arcpy.FromWKT(wkt)
+
+    # Handle line geometry with buffering
+    elif wkt.startswith("LINESTRING"):
+        try:
+            line_geom = arcpy.FromWKT(wkt)
+
+            # Get radius from record, default to 3 meters if missing or invalid
+            raw_radius = record.get("radius", None)
+            try:
+                radius_m = float(raw_radius) if raw_radius not in (None, "") else 0
+            except ValueError:
+                radius_m = 0
+
+            if radius_m <= 0:
+                radius_m = 3  # default buffer radius
+
+            # Project to local UTM (Zone 10N) for accurate buffering
+            projected_line = line_geom.projectAs(arcpy.SpatialReference(26910))
+            buffered = projected_line.buffer(radius_m)
+
+            # Reproject back to WGS84
+            return buffered.projectAs(arcpy.SpatialReference(4326))
+
+        except Exception as e:
+            print(f"Error buffering LINESTRING: {e}")
+            return None
+
+    else:
+        print(f"Unsupported geometry type: {wkt[:30]}")
+        return None
 
 # Delete all existing rows from the feature class to avoid accumulation of old data
 if arcpy.Exists(fc_path):
@@ -111,48 +128,33 @@ if arcpy.Exists(fc_path):
             cursor.deleteRow()
     print(f"Cleared existing records in {fc_name}.")
 
-
-##### INSERT DATA INTO FEATURE CLASS
-# Insert data into feature class (for the most recent API call)
+# Insert data into feature class
 fields = ["SHAPE@", "CommonName", "Taxon", "Observer", "PercentCover"]
 
 with arcpy.da.InsertCursor(fc_path, fields) as cursor:
-    # Check how many records are being processed
     print(f"Total records fetched from API: {len(data)}")
-    
     for record in data:
-        # Debug: Print the current record to see its contents
         print(f"Processing record: {record}")
-        
-        if "Reference Polygon" in record and record["Reference Polygon"]:
-            wkt = record["Reference Polygon"]
-            
-            try:
-                polygon = arcpy.FromWKT(wkt)
-                print(f"Created polygon for {record['Taxon']}")
-            except Exception as e:
-                print(f"Error creating polygon: {e}")
-                continue  # Skip this record if there's an error creating the polygon
-            
-            # Convert Percent Cover to a numeric value
-            percent_cover = convert_percent_cover(record.get("Percent Cover", ""))
-            
-            # Debug: Print the converted percent cover value
-            print(f"Converted Percent Cover: {percent_cover}")
-            
-            # Insert the row into the feature class with the percent cover (default if missing)
-            print(f"Inserting {record['Taxon']} with percent cover {percent_cover}")
-            cursor.insertRow([polygon, 
-                              record.get("Common Name", ""), 
-                              record.get("Taxon", ""), 
-                              record.get("Observer", ""), 
-                              percent_cover])
-        else:
-            print(f"Skipping {record['Taxon']} due to missing polygon data")
+
+        polygon = get_polygon_from_wkt(record)
+        if not polygon:
+            print(f"Skipping {record.get('Taxon', 'Unknown')} due to invalid geometry.")
+            continue
+
+        percent_cover = convert_percent_cover(record.get("Percent Cover", ""))
+        print(f"Converted Percent Cover: {percent_cover}")
+        print(f"Inserting {record.get('Taxon', '')} with percent cover {percent_cover}")
+
+        cursor.insertRow([
+            polygon,
+            record.get("Common Name", ""),
+            record.get("Taxon", ""),
+            record.get("Observer", ""),
+            percent_cover
+        ])
 
 print("Data added to feature class.")
 
-###### SYMBOLOGY 
 # Apply symbology
 symbology_layer = r'C:\GIS\CalfloraProject\Symbology.lyrx'
 
@@ -174,15 +176,12 @@ else:
 
 # Apply symbology from layer file
 if os.path.exists(symbology_layer):
-    layer.updateConnectionProperties(fc_path, fc_path)  # Ensures layer is properly linked
+    layer.updateConnectionProperties(fc_path, fc_path)
     arcpy.ApplySymbologyFromLayer_management(layer, symbology_layer)
     print("Symbology applied.")
 else:
     print(f"Symbology layer not found at {symbology_layer}")
 
-
-
-###### EXPORT 
 # Export to PDF
 pdf_output = r'C:\GIS\CalfloraProject\Calflora_Map.pdf'
 layout = doc.listLayouts()[0]
