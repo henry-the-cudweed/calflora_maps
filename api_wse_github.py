@@ -21,7 +21,7 @@ api_url = f"https://api.calflora.org/workSessions?dateAfter={dateAfter}&dateBefo
 
 ##### API REQUEST FOR WSE
 
-headers = {"X-Api-Key": "CKLjKHH1nVZMlC8tsu"}
+headers = {"X-Api-Key": insert api key here}
 response = requests.get(api_url, headers=headers)
 
 # Check the status and handle the response
